@@ -1,6 +1,6 @@
-import java.io.{BufferedWriter, File, FileWriter}
+import java.nio.file.{Files, Paths}
 
-import net.tixxit.delimited._
+import scala.collection.JavaConverters._
 
 object Main extends App {
 
@@ -10,18 +10,16 @@ object Main extends App {
     val medianByZipPath = args(1)
     val medianByDatePath = args(2)
 
-    val rawInputData = new File(inputFilePath)
-    // setting up parser for .txt containing data
-    val parser: DelimitedParser = DelimitedParser(DelimitedFormat.Guess)
-    val rows: Vector[Either[DelimitedError, Row]] = parser.parseFile(rawInputData)
-
-    // after parsing if each line does not contain 21 cell spaces, we ignore that line
-    val data = rows.collect { case Right(row) => row.toList }
-      .filter(list => list.size == 21)
+    // reading in file as an List of lines containing a List of Strings, each string is a cell
+    val inputData = Files.lines(Paths.get(inputFilePath))
+      .iterator
+      .asScala
+      .toList
+      .map(_.split("\\|").toList)
+      .withFilter(_.length == 21)   // if each line does not contain 21 cell spaces, we ignore that line
 
     // deserializing data
-    val donors = data.map(createDonor)
-
+    val donors = inputData.map(createDonor)
     // input consideration #1 and 5
     val cleanedData = donors.filter(d => d.noOtherId && d.id.isDefined && d.amount.isDefined)
 
@@ -32,8 +30,9 @@ object Main extends App {
     val medianValByDate = dateData.foldLeft(Vector.empty[MedianByDate])(processMedianValByDate)
       .sortBy(d => (d.id, d.date))
 
-    writeMedianData(medianValByZip, medianByZipPath)      //  writing medianvals_by_zip data to .txt file
-    writeMedianData(medianValByDate, medianByDatePath)    //  writing medianvals_by_date data to .txt file
+    // writing data to files as defined in the arguments
+    writeData(medianValByZip, medianByZipPath)      //  writing medianvals_by_zip data to .txt file
+    writeData(medianValByDate, medianByDatePath)    //  writing medianvals_by_date data to .txt file
   }
 
   private def createDonor(rawData: List[String]): Donor = {
@@ -77,7 +76,8 @@ object Main extends App {
   private def processMedianValByDate(records: Vector[MedianByDate], donor: Donor): Vector[MedianByDate] = {
     val existingDonor = records.find(r => r.id == donor.id.get && r.date == donor.date.get)
     val donorAmt = donor.amount.get.toInt
-    val recordToAdd = if (existingDonor.isDefined) { // new record being created using info from existing donor if found
+
+    val recordToAdd = if (existingDonor.isDefined) {          // updating existing record if found
       val old = existingDonor.get
       val donationAmounts = old.amounts :+ donorAmt
       val updatedRecord = old.copy(
@@ -86,8 +86,8 @@ object Main extends App {
         totalAmount = old.totalAmount + donorAmt,
         amounts = donationAmounts
       )
-      records.toBuffer += updatedRecord -= existingDonor.get
-    } else { // a completely new record is created
+      records.toBuffer += updatedRecord -= existingDonor.get  // adding updated record and removing the existing
+    } else {                                                  // a completely new record is created
       records :+ MedianByDate(
         id = donor.id.get,
         date = donor.date.get,
@@ -101,16 +101,15 @@ object Main extends App {
     recordToAdd.toVector
   }
 
-  private def calculateMedian(nums: List[Int]): Int = {
-    val (lower, upper) = nums.sorted.splitAt(nums.size / 2)
-    val median = if (nums.size % 2 == 0) (lower.last + upper.head) / 2.0 else upper.head
+  private def calculateMedian(numbers: List[Int]): Int = {
+    val (lower, upper) = numbers.sorted.splitAt(numbers.size / 2)
+    val median = if (numbers.size % 2 == 0) (lower.last + upper.head) / 2.0 else upper.head
 
     median.round.toInt
   }
 
-  private def writeMedianData(processedDonors: Vector[Output], medianValFile: String): Unit = {
-    val output = new FileWriter(medianValFile)
-    val writer = new BufferedWriter(output)
+  private def writeData(processedDonors: Vector[Output], outputFileLocation: String): Unit = {
+    val writer = Files.newBufferedWriter(Paths.get(outputFileLocation))
 
     processedDonors.foreach { donor =>
       val text = donor match {

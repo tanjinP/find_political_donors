@@ -18,14 +18,14 @@ case class Donor(
     this.copy(
       id = this.id.filter(_.trim.nonEmpty),
       zip = this.zip.filter(_.trim.nonEmpty)
-        .map(_.take(5))                         //  consideration #3
-        .find(_.matches("^\\d{5}$")),           //  consideration #4
+        .map(_.take(5))                                       //  consideration #3
+        .find(_.matches("^\\d{5}$")),                         //  consideration #4
       date = this.date.filter(_.trim.nonEmpty)
         .map(s => Try(LocalDate.parse(s, dateFormat)))
-        .find(_.isSuccess)                      //  consideration #2
+        .find(_.isSuccess)                                    //  consideration #2
         .flatMap(_ => this.date),
-      amount = this.amount.filter(_.trim.nonEmpty)
-        .filter(_.matches("^\\d+$"))            // ensuring a valid number to .toInt is safe
+      amount = this.amount
+        .filter(s => s.trim.nonEmpty && s.matches("^\\d+$"))  // ensuring a valid number so .toInt is safe
     )
   }
 }
