@@ -15,12 +15,9 @@ object Main extends App {
     val parser: DelimitedParser = DelimitedParser(DelimitedFormat.Guess)
     val rows: Vector[Either[DelimitedError, Row]] = parser.parseFile(rawInputData)
 
-    println(s"Input data contains ${rows.size} lines") // TODO debug
-
+    // after parsing if each line does not contain 21 cell spaces, we ignore that line
     val data = rows.collect { case Right(row) => row.toList }
-      .filter(list => list.size == 21) // after parsing if each line does not contain 21 cell spaces, we ignore that line
-
-    println(s"Was only able to take in ${data.size} lines") // TODO debug
+      .filter(list => list.size == 21)
 
     // deserializing data
     val donors = data.map(createDonor)
@@ -32,10 +29,11 @@ object Main extends App {
     val dateData = cleanedData.filter(_.date.isDefined) //  input consideration #2
 
     val medianValByZip = zipData.foldLeft(Vector.empty[MedianByZip])(processMedianValByZip)
-    medianValByZip.foreach(d => println("Here is zip data" + d))
+    val medianValByDate = dateData.foldLeft(Vector.empty[MedianByDate])(processMedianValByDate)
+      .sortBy(d => (d.id, d.date))
 
-    writeMedianVals(medianValByZip, medianByZipPath)
-
+    writeMedianData(medianValByZip, medianByZipPath)      //  writing medianvals_by_zip data to .txt file
+    writeMedianData(medianValByDate, medianByDatePath)    //  writing medianvals_by_date data to .txt file
   }
 
   private def createDonor(rawData: List[String]): Donor = {
@@ -52,18 +50,16 @@ object Main extends App {
   private def processMedianValByZip(records: Vector[MedianByZip], donor: Donor): Vector[MedianByZip] = {
     val existingDonor = records.find(r => r.id == donor.id.get && r.zip == donor.zip.get)
     val donorAmt = donor.amount.get.toInt
-    val recordToAdd = if (existingDonor.isDefined) { // new record being created using info from existing donor if found
-      val old = existingDonor.get
+
+    val recordToAdd = existingDonor.map {old =>   // new record being created using info from existing donor if found
       val donationAmounts = old.amounts :+ donorAmt
-      val (lower, upper) = donationAmounts.sorted.splitAt(donationAmounts.size / 2)
-      val med = if (donationAmounts.size % 2 == 0) (lower.last + upper.head) / 2.0 else upper.head
       old.copy(
-        median = med.round.toInt,
+        median = calculateMedian(donationAmounts),
         contributions = old.contributions + 1,
         totalAmount = old.totalAmount + donorAmt,
-        amounts = donationAmounts,
+        amounts = donationAmounts
       )
-    } else { // a completely new record is created
+    }.getOrElse( // otherwise a completely new record is created
       MedianByZip(
         id = donor.id.get,
         zip = donor.zip.get,
@@ -72,18 +68,56 @@ object Main extends App {
         amounts = List(donorAmt),
         totalAmount = donorAmt
       )
-    }
+    )
 
     records :+ recordToAdd
   }
 
-  private def writeMedianVals(processedDonors: Vector[MedianByZip], medianValFile: String): Unit = {
+  // TODO this algo needs cleanup, look into collection conversions
+  private def processMedianValByDate(records: Vector[MedianByDate], donor: Donor): Vector[MedianByDate] = {
+    val existingDonor = records.find(r => r.id == donor.id.get && r.date == donor.date.get)
+    val donorAmt = donor.amount.get.toInt
+    val recordToAdd = if (existingDonor.isDefined) { // new record being created using info from existing donor if found
+      val old = existingDonor.get
+      val donationAmounts = old.amounts :+ donorAmt
+      val updatedRecord = old.copy(
+        median = calculateMedian(donationAmounts),
+        contributions = old.contributions + 1,
+        totalAmount = old.totalAmount + donorAmt,
+        amounts = donationAmounts
+      )
+      records.toBuffer += updatedRecord -= existingDonor.get
+    } else { // a completely new record is created
+      records :+ MedianByDate(
+        id = donor.id.get,
+        date = donor.date.get,
+        median = donorAmt,
+        contributions = 1,
+        amounts = List(donorAmt),
+        totalAmount = donorAmt
+      )
+    }
+
+    recordToAdd.toVector
+  }
+
+  private def calculateMedian(nums: List[Int]): Int = {
+    val (lower, upper) = nums.sorted.splitAt(nums.size / 2)
+    val median = if (nums.size % 2 == 0) (lower.last + upper.head) / 2.0 else upper.head
+
+    median.round.toInt
+  }
+
+  private def writeMedianData(processedDonors: Vector[Output], medianValFile: String): Unit = {
     val output = new FileWriter(medianValFile)
     val writer = new BufferedWriter(output)
 
-    processedDonors.foreach { d =>
-      val record = s"${d.id}|${d.zip}|${d.median}|${d.contributions}|${d.totalAmount}"
-      writer.write(record)
+    processedDonors.foreach { donor =>
+      val text = donor match {
+        case z: MedianByZip => s"${z.id}|${z.zip}|${z.median}|${z.contributions}|${z.totalAmount}"
+        case d: MedianByDate => s"${d.id}|${d.date}|${d.median}|${d.contributions}|${d.totalAmount}"
+      }
+      writer.write(text)
       writer.flush()
       writer.newLine()
     }

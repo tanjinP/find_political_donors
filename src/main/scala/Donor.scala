@@ -14,7 +14,7 @@ case class Donor(
     * Returns cleaned up the Donor object as per 'Input file considerations'
     */
   def clean: Donor = {
-    val dateFormat = DateTimeFormatter.ofPattern("MMddYYYY")
+    val dateFormat = DateTimeFormatter.ofPattern("MMddyyyy")
     this.copy(
       id = this.id.filter(_.trim.nonEmpty),
       zip = this.zip.filter(_.trim.nonEmpty)
@@ -30,6 +30,7 @@ case class Donor(
   }
 }
 
+trait Output
 case class MedianByZip(
                         id: String,
                         zip: String,
@@ -37,4 +38,13 @@ case class MedianByZip(
                         contributions: Int,
                         totalAmount: Int,
                         amounts: List[Int] = List.empty
-                      )
+                      ) extends Output
+
+case class MedianByDate(
+                         id: String,
+                         date: String,
+                         median: Int,
+                         contributions: Int,
+                         totalAmount: Int,
+                         amounts: List[Int] = List.empty
+                       ) extends Output
