@@ -1,104 +1,122 @@
+import java.io.BufferedWriter
 import java.nio.file.{Files, Paths}
+import java.time.LocalDate
+import java.time.format.{DateTimeFormatter, ResolverStyle}
 
 import scala.collection.JavaConverters._
+import scala.collection.mutable
+import scala.util.Try
+import scala.util.control.Breaks._
 
 object Main extends App {
+  require(args.length == 3, "You must provide a path for the input file and 2 output file names")
+  val inputFilePath = args(0)
+  val medianByZipPath = args(1)
+  val medianByDatePath = args(2)
 
-  override def main(args: Array[String]): Unit = {
-    require(args.length == 3, "You must provide a path for the input file and 2 output file names")
-    val inputFilePath = args(0)
-    val medianByZipPath = args(1)
-    val medianByDatePath = args(2)
+  val zipWriter = Files.newBufferedWriter(Paths.get(medianByZipPath))
+  val dateWriter = Files.newBufferedWriter(Paths.get(medianByDatePath))
 
-    // reading in file as an List of lines containing a List of Strings, each string is a cell
-    val inputData = Files.lines(Paths.get(inputFilePath))
-      .iterator
-      .asScala
-      .toList
-      .map(_.split("\\|").toList)
-      .withFilter(_.length == 21)   // if each line does not contain 21 cell spaces, we ignore that line
+  val zipData = mutable.TreeMap.empty[(String, String), DonorRecord]
+  val dateData = mutable.TreeMap.empty[(String, String), DonorRecord]
 
-    // deserializing data
-    val donors = inputData.map(createDonor)
-    // input consideration #1 and 5
-    val cleanedData = donors.filter(d => d.noOtherId && d.id.isDefined && d.amount.isDefined)
-
-    val zipData = cleanedData.filter(_.zip.isDefined)   //  input consideration #4
-    val dateData = cleanedData.filter(_.date.isDefined) //  input consideration #2
-
-    val medianValByZip = zipData.foldLeft(Vector.empty[MedianByZip])(processMedianValByZip)
-    val medianValByDate = dateData.foldLeft(Vector.empty[MedianByDate])(processMedianValByDate)
-      .sortBy(d => (d.id, d.date))
-
-    // writing data to files as defined in the arguments
-    writeData(medianValByZip, medianByZipPath)      //  writing medianvals_by_zip data to .txt file
-    writeData(medianValByDate, medianByDatePath)    //  writing medianvals_by_date data to .txt file
+  val t0 = System.nanoTime
+  println(s"Program to sort through $inputFilePath is starting execution...")
+  Files.lines(Paths.get(inputFilePath)).iterator.asScala.foreach { line =>
+    val lineElements = line.split("\\|")
+    // break and move to next record if input considerations are not met (21 possible elements or input considerations)
+    breakable {
+      if (lineElements.length != 21) break
+      else if (!acceptableData(lineElements)) break
+      else {
+        val id = lineElements.head
+        val amount = lineElements(14).toInt
+        if (hasAcceptableZip(lineElements)) {
+          val zip = lineElements(10).take(5)
+          updateMap(key = (id, zip), amount, zipData)
+          writeZipLine(id, zip, zipData((id, zip)), zipWriter) // printing zip relevant data as soon as possible
+        }
+        if (hasAcceptableDate(lineElements)) {
+          val date = lineElements(13)
+          updateMap(key = (id, date), amount, dateData)
+        }
+      }
+    }
   }
 
-  private def createDonor(rawData: List[String]): Donor = {
-    Donor(
-      id = rawData.headOption,              //  CMTE_ID is in position 1 (.headOption is same as .lift(0))
-      zip = rawData.lift(10),               //  ZIP_CODE is in position 11
-      date = rawData.lift(13),              //  TRANSACTION_DT is in position 14
-      amount = rawData.lift(14),            //  TRANSACTION_AMT is in position 15
-      noOtherId = rawData.lift(15)          //  OTHER_ID is in position 16
-        .exists(_.trim.isEmpty)
-    ).clean
+  writeDates(dateData, dateWriter)  // processing all date relevant data before printing
+  val t1 = System.nanoTime
+  println(s"Program took ${BigDecimal((t1 - t0) / 1000000000.0).setScale(2, BigDecimal.RoundingMode.HALF_UP)}s to " +
+    s"execute, look at results in the files: $medianByZipPath and $medianByDatePath")
+
+  // everything below this line are helpers to execute main program above
+  case class DonorRecord(
+                          contributions: Int,
+                          totalAmount: Int = 0,
+                          amounts: List[Int] = List.empty,
+                          currentMedian: Int = Int.MinValue
+                        )
+
+  private def acceptableData(line: Array[String]): Boolean = {
+    val validId = line.headOption.exists(_.trim.nonEmpty)
+    val validAmount = line.lift(14).exists(s => s.trim.nonEmpty || s.matches("^\\d+$"))
+    val noOtherId = line.lift(15).exists(_.trim.isEmpty)
+
+    validId && validAmount && noOtherId
   }
 
-  private def processMedianValByZip(records: Vector[MedianByZip], donor: Donor): Vector[MedianByZip] = {
-    val existingDonor = records.find(r => r.id == donor.id.get && r.zip == donor.zip.get)
-    val donorAmt = donor.amount.get.toInt
+  private def hasAcceptableZip(line: Array[String]): Boolean = {
+    line.lift(10)
+      .map(_.take(5))
+      .exists(s => s.trim.nonEmpty && s.matches("^\\d{5}$"))
+  }
 
-    val recordToAdd = existingDonor.map {old =>   // new record being created using info from existing donor if found
-      val donationAmounts = old.amounts :+ donorAmt
-      old.copy(
-        median = calculateMedian(donationAmounts),
-        contributions = old.contributions + 1,
-        totalAmount = old.totalAmount + donorAmt,
-        amounts = donationAmounts
+  private def hasAcceptableDate(line: Array[String]): Boolean = {
+    val dateFormat = DateTimeFormatter.ofPattern("MMdduuuu")
+      .withResolverStyle(ResolverStyle.STRICT)
+
+    line.lift(13).filter(_.trim.nonEmpty)
+      .map(s => Try(LocalDate.parse(s, dateFormat)))
+      .exists(_.isSuccess)
+  }
+
+  private def updateMap(key: (String, String), amt: Int, data: mutable.TreeMap[(String, String), DonorRecord]): Unit = {
+    val newValue = if(data.get(key).isDefined) {
+      val existingRecord = data(key)
+      existingRecord.copy(
+        contributions = existingRecord.contributions + 1,
+        amounts = existingRecord.amounts :+ amt,
+        totalAmount = existingRecord.totalAmount + amt,
+        currentMedian = calculateMedian(existingRecord.amounts :+ amt)
       )
-    }.getOrElse( // otherwise a completely new record is created
-      MedianByZip(
-        id = donor.id.get,
-        zip = donor.zip.get,
-        median = donorAmt,
+    } else {
+      DonorRecord(
         contributions = 1,
-        amounts = List(donorAmt),
-        totalAmount = donorAmt
-      )
-    )
-
-    records :+ recordToAdd
-  }
-
-  // TODO this algo needs cleanup, look into collection conversions
-  private def processMedianValByDate(records: Vector[MedianByDate], donor: Donor): Vector[MedianByDate] = {
-    val existingDonor = records.find(r => r.id == donor.id.get && r.date == donor.date.get)
-    val donorAmt = donor.amount.get.toInt
-
-    val recordToAdd = if (existingDonor.isDefined) {          // updating existing record if found
-      val old = existingDonor.get
-      val donationAmounts = old.amounts :+ donorAmt
-      val updatedRecord = old.copy(
-        median = calculateMedian(donationAmounts),
-        contributions = old.contributions + 1,
-        totalAmount = old.totalAmount + donorAmt,
-        amounts = donationAmounts
-      )
-      records.toBuffer += updatedRecord -= existingDonor.get  // adding updated record and removing the existing
-    } else {                                                  // a completely new record is created
-      records :+ MedianByDate(
-        id = donor.id.get,
-        date = donor.date.get,
-        median = donorAmt,
-        contributions = 1,
-        amounts = List(donorAmt),
-        totalAmount = donorAmt
+        amounts = List(amt),
+        totalAmount = amt,
+        currentMedian = amt
       )
     }
 
-    recordToAdd.toVector
+    data.update(key, newValue)
+  }
+
+  private def writeZipLine(id: String, zip: String, record: DonorRecord, writer: BufferedWriter): Unit = {
+    val output = s"$id|$zip|${calculateMedian(record.amounts)}|${record.contributions}|${record.totalAmount}"
+    writer.write(output)
+    writer.flush()
+    writer.newLine()
+  }
+
+  private def writeDates(data: mutable.TreeMap[(String, String), DonorRecord], writer: BufferedWriter): Unit = {
+    data.toSeq
+      .sortBy{case (k, _) => (k._1, k._2)}
+      .foreach { case ((id, date), record) =>
+        val output = s"$id|$date|${calculateMedian(record.amounts)}|${record.contributions}|${record.totalAmount}"
+        writer.write(output)
+        writer.flush()
+        writer.newLine()
+      }
   }
 
   private def calculateMedian(numbers: List[Int]): Int = {
@@ -107,19 +125,4 @@ object Main extends App {
 
     median.round.toInt
   }
-
-  private def writeData(processedDonors: Vector[Output], outputFileLocation: String): Unit = {
-    val writer = Files.newBufferedWriter(Paths.get(outputFileLocation))
-
-    processedDonors.foreach { donor =>
-      val text = donor match {
-        case z: MedianByZip => s"${z.id}|${z.zip}|${z.median}|${z.contributions}|${z.totalAmount}"
-        case d: MedianByDate => s"${d.id}|${d.date}|${d.median}|${d.contributions}|${d.totalAmount}"
-      }
-      writer.write(text)
-      writer.flush()
-      writer.newLine()
-    }
-  }
 }
-
