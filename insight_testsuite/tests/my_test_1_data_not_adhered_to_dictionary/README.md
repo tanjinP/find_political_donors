@@ -1,0 +1,2 @@
+- Input file contains data that does not adhere to the dictionary
+- No output files as all records are ignored
