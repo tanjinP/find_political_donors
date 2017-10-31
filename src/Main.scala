@@ -81,22 +81,21 @@ object Main extends App {
   }
 
   private def updateMap(key: (String, String), amt: Int, data: mutable.TreeMap[(String, String), DonorRecord]): Unit = {
-    val newValue = if(data.get(key).isDefined) {
-      val existingRecord = data(key)
+    val newValue = data.get(key).map(existingRecord =>
       existingRecord.copy(
         contributions = existingRecord.contributions + 1,
         amounts = existingRecord.amounts :+ amt,
         totalAmount = existingRecord.totalAmount + amt,
         currentMedian = calculateMedian(existingRecord.amounts :+ amt)
       )
-    } else {
+    ).getOrElse(
       DonorRecord(
         contributions = 1,
         amounts = List(amt),
         totalAmount = amt,
         currentMedian = amt
       )
-    }
+    )
 
     data.update(key, newValue)
   }
