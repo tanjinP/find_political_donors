@@ -1,0 +1,1 @@
+Input file contains TRANSACTION_DT that are a mix of good and bas as per [Input file considerations](https://github.com/InsightDataScience/find-political-donors/blob/master/README.md#input-file-considerations) and no entries for ZIP_CODE so that output will be empty
