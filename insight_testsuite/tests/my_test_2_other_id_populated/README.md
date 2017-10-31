@@ -1,0 +1,2 @@
+- Input file contains data for this field OTHER_ID
+- No output files as they all contain a value for OTHER_ID
