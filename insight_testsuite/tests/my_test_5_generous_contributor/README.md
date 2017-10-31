@@ -1,0 +1,1 @@
+- Input file contains relevant information for a single contributor, all records are applicable to be processed
