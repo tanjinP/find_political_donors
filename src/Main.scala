@@ -3,10 +3,10 @@ import java.nio.file.{Files, Paths}
 import java.time.LocalDate
 import java.time.format.{DateTimeFormatter, ResolverStyle}
 
-import scala.collection.JavaConverters._
 import scala.collection.mutable
 import scala.util.Try
 import scala.util.control.Breaks._
+import scala.io.Source
 
 object Main extends App {
   require(args.length == 3, "You must provide a path for the input file and 2 output file names")
@@ -22,29 +22,15 @@ object Main extends App {
 
   val t0 = System.nanoTime
   println(s"Program to sort through $inputFilePath is starting execution...")
-  Files.lines(Paths.get(inputFilePath)).iterator.asScala.foreach { line =>
-    val lineElements = line.split("\\|")
-    // break and move to next record if input considerations are not met (21 possible elements or input considerations)
-    breakable {
-      if (lineElements.length != 21) break
-      else if (!acceptableData(lineElements)) break
-      else {
-        val id = lineElements.head
-        val amount = lineElements(14).toInt
-        if (hasAcceptableZip(lineElements)) {
-          val zip = lineElements(10).take(5)
-          updateMap(key = (id, zip), amount, zipData)
-          writeZipLine(id, zip, zipData((id, zip)), zipWriter) // printing zip relevant data as soon as possible
-        }
-        if (hasAcceptableDate(lineElements)) {
-          val date = lineElements(13)
-          updateMap(key = (id, date), amount, dateData)
-        }
-      }
-    }
-  }
+
+  Source.fromFile(inputFilePath).getLines.toStream
+    .map(_.split("\\|"))
+    .filter(_.length == 21)
+    .filter(acceptableData)
+    .foreach(findPoliticalDonors)
 
   writeDates(dateData, dateWriter)  // processing all date relevant data before printing
+
   val t1 = System.nanoTime
   println(s"Program took ${BigDecimal((t1 - t0) / 1000000000.0).setScale(2, BigDecimal.RoundingMode.HALF_UP)}s to " +
     s"execute, look at results in the files: $medianByZipPath and $medianByDatePath")
@@ -56,6 +42,20 @@ object Main extends App {
                           amounts: List[Int] = List.empty,
                           currentMedian: Int = Int.MinValue
                         )
+
+  private def findPoliticalDonors(line: Array[String]): Unit = {
+    val id = line.head
+    val amount = line(14).toInt
+    if (hasAcceptableZip(line)) {
+      val zip = line(10).take(5)
+      updateMap(key = (id, zip), amount, zipData)
+      writeZipLine(id, zip, zipData((id, zip)), zipWriter) // printing zip relevant data as soon as possible
+    }
+    if (hasAcceptableDate(line)) {
+      val date = line(13)
+      updateMap(key = (id, date), amount, dateData)
+    }
+  }
 
   private def acceptableData(line: Array[String]): Boolean = {
     val validId = line.headOption.exists(_.trim.nonEmpty)
